@@ -1,0 +1,67 @@
+name: Add ClickUp link to PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  add-link:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract CU codes from all commits in PR
+        id: extract
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+
+          CU_CODES=$(git log origin/${{ github.base_ref }}..HEAD \
+            --pretty=format:%s | grep -oE "\[CU-[a-zA-Z0-9]+\]" | sort -u || true)
+
+          echo "CU_CODES<<EOF" >> $GITHUB_ENV
+          echo "$CU_CODES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Stop if no CU code found
+        if: env.CU_CODES == ''
+        run: |
+          echo "No ClickUp code found in PR commits — skipping"
+          exit 0
+
+      - name: Parse task IDs
+        run: |
+          TASK_IDS=$(echo "$CU_CODES" | sed -E 's/\[CU-([a-zA-Z0-9]+)\]/\1/g' | xargs)
+          echo "TASK_IDS=$TASK_IDS" >> $GITHUB_ENV
+
+      - name: Add ClickUp link(s) to top of PR Description
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          CURRENT_BODY=$(gh pr view $PR_NUMBER --json body -q '.body')
+
+          LINKS=""
+          for TASK_ID in $TASK_IDS; do
+            LINK="🔗 ClickUp Task: https://app.clickup.com/t/$TASK_ID"
+            if [[ "$CURRENT_BODY" != *"$LINK"* ]]; then
+              LINKS="${LINKS}\n$LINK"
+            fi
+          done
+
+          if [ -z "$LINKS" ]; then
+            echo "All links already exist — skipping update"
+            exit 0
+          fi
+
+          NEW_BODY=$(printf "%b\n\n%b" "$LINKS" "$CURRENT_BODY")
+          gh pr edit $PR_NUMBER --body "$NEW_BODY"
+
+          echo "PR description updated successfully"
