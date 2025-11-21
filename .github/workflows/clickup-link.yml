@@ -32,6 +32,10 @@ jobs:
       - name: Extract task ID
         run: |
           TASK_ID=$(echo "$CU_CODE" | sed -E 's/\[CU-([a-zA-Z0-9]+)\]/\1/')
+          if [ -z "$TASK_ID" ]; then
+            echo "No task ID found — skipping"
+            exit 0
+          fi
           echo "TASK_ID=$TASK_ID" >> $GITHUB_ENV
 
       - name: Add ClickUp link at top of PR Description
