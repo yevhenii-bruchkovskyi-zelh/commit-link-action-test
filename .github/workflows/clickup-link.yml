@@ -20,22 +20,25 @@ jobs:
         id: extract
         run: |
           LAST_COMMIT_MSG=$(git log -1 --pretty=format:%s)
+          # Extract CU code if present
           CU_CODE=$(echo "$LAST_COMMIT_MSG" | grep -oE "\[CU-[a-zA-Z0-9]+\]" || true)
+          # Trim whitespace
+          CU_CODE=$(echo "$CU_CODE" | xargs)
           echo "CU_CODE=$CU_CODE" >> $GITHUB_ENV
 
-      - name: Stop if last commit has no CU code
-        if: env.CU_CODE == ''
+      - name: Extract task ID and skip if none
         run: |
-          echo "Last commit does not contain a ClickUp code — skipping"
-          exit 0
+          if [ -z "$CU_CODE" ]; then
+            echo "No ClickUp code found in last commit — skipping"
+            exit 0
+          fi
 
-      - name: Extract task ID
-        run: |
           TASK_ID=$(echo "$CU_CODE" | sed -E 's/\[CU-([a-zA-Z0-9]+)\]/\1/')
           if [ -z "$TASK_ID" ]; then
             echo "No task ID found — skipping"
             exit 0
           fi
+
           echo "TASK_ID=$TASK_ID" >> $GITHUB_ENV
 
       - name: Add ClickUp link at top of PR Description
@@ -45,15 +48,18 @@ jobs:
           PR_NUMBER=${{ github.event.pull_request.number }}
           CURRENT_BODY=$(gh pr view $PR_NUMBER --json body -q '.body')
 
-          LINK="🔗 ClickUp Task: https://app.clickup.com/t/$TASK_ID"
+          # Build link only if TASK_ID exists
+          if [ -n "$TASK_ID" ]; then
+            LINK="🔗 ClickUp Task: https://app.clickup.com/t/$TASK_ID"
 
-          # Only add if not already at top
-          if [[ "$CURRENT_BODY" == "$LINK"* ]]; then
-            echo "Link already at top — nothing to do"
-            exit 0
+            # Avoid duplicate at top
+            if [[ "$CURRENT_BODY" != "$LINK"* ]]; then
+              NEW_BODY="$(printf "%s\n\n%s" "$LINK" "$CURRENT_BODY")"
+              gh pr edit $PR_NUMBER --body "$NEW_BODY"
+              echo "PR description updated successfully"
+            else
+              echo "Link already at top — nothing to do"
+            fi
+          else
+            echo "No TASK_ID — skipping PR update"
           fi
-
-          NEW_BODY="$(printf "%s\n\n%s" "$LINK" "$CURRENT_BODY")"
-          gh pr edit $PR_NUMBER --body "$NEW_BODY"
-
-          echo "PR description updated successfully"
