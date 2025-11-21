@@ -15,53 +15,41 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Extract CU codes from all commits in PR
+      - name: Get last commit CU code
         id: extract
         run: |
-          git fetch origin ${{ github.base_ref }} --depth=1
+          LAST_COMMIT_MSG=$(git log -1 --pretty=format:%s)
+          CU_CODE=$(echo "$LAST_COMMIT_MSG" | grep -oE "\[CU-[a-zA-Z0-9]+\]" || true)
+          echo "CU_CODE=$CU_CODE" >> $GITHUB_ENV
 
-          CU_CODES=$(git log origin/${{ github.base_ref }}..HEAD \
-            --pretty=format:%s | grep -oE "\[CU-[a-zA-Z0-9]+\]" | sort -u || true)
-
-          echo "CU_CODES<<EOF" >> $GITHUB_ENV
-          echo "$CU_CODES" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Stop if no CU code found
-        if: env.CU_CODES == ''
+      - name: Stop if last commit has no CU code
+        if: env.CU_CODE == ''
         run: |
-          echo "No ClickUp code found in PR commits — skipping"
+          echo "Last commit does not contain a ClickUp code — skipping"
           exit 0
 
-      - name: Parse task IDs
+      - name: Extract task ID
         run: |
-          TASK_IDS=$(echo "$CU_CODES" | sed -E 's/\[CU-([a-zA-Z0-9]+)\]/\1/g' | xargs)
-          echo "TASK_IDS=$TASK_IDS" >> $GITHUB_ENV
+          TASK_ID=$(echo "$CU_CODE" | sed -E 's/\[CU-([a-zA-Z0-9]+)\]/\1/')
+          echo "TASK_ID=$TASK_ID" >> $GITHUB_ENV
 
-      - name: Add ClickUp link(s) to top of PR Description
+      - name: Add ClickUp link at top of PR Description
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
           CURRENT_BODY=$(gh pr view $PR_NUMBER --json body -q '.body')
 
-          LINKS=""
-          for TASK_ID in $TASK_IDS; do
-            LINK="🔗 ClickUp Task: https://app.clickup.com/t/$TASK_ID"
-            if [[ "$CURRENT_BODY" != *"$LINK"* ]]; then
-              LINKS="${LINKS}\n$LINK"
-            fi
-          done
+          LINK="🔗 ClickUp Task: https://app.clickup.com/t/$TASK_ID"
 
-          if [ -z "$LINKS" ]; then
-            echo "All links already exist — skipping update"
+          # Only add if not already at top
+          if [[ "$CURRENT_BODY" == "$LINK"* ]]; then
+            echo "Link already at top — nothing to do"
             exit 0
           fi
 
-          NEW_BODY=$(printf "%b\n\n%b" "$LINKS" "$CURRENT_BODY")
+          NEW_BODY="$(printf "%s\n\n%s" "$LINK" "$CURRENT_BODY")"
           gh pr edit $PR_NUMBER --body "$NEW_BODY"
 
           echo "PR description updated successfully"
